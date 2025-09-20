@@ -1,4 +1,4 @@
-import { createElement, render } from './vdom.js';
+import { createElement, render } from "./vdom.js";
 
 class Component {
   constructor(props = {}) {
@@ -6,15 +6,16 @@ class Component {
     this.state = this.state || {};
     this.isMounted = false;
     this.containerRef = null;
+    this.__updater = null;
   }
 
   setState(patch) {
     this.state = {
       ...this.state,
-      ...(typeof patch === 'function' ? patch(this.state) : patch),
+      ...(typeof patch === "function" ? patch(this.state) : patch),
     };
 
-    if (typeof this.__updater === 'function') {
+    if (typeof this.__updater === "function") {
       this.__updater();
 
       return;
@@ -28,11 +29,9 @@ class Component {
     this.isMounted = true;
     this.updateInternal();
 
-    if (typeof this.componentDidMount !== 'function') {
-      return;
+    if (typeof this.componentDidMount === "function") {
+      queueMicrotask(() => this.componentDidMount());
     }
-
-    queueMicrotask(() => this.componentDidMount());
   }
 
   unmount() {
@@ -41,7 +40,7 @@ class Component {
   }
 
   updateInternal() {
-    if (typeof this.__updater === 'function') {
+    if (typeof this.__updater === "function") {
       this.__updater();
 
       return;
@@ -53,8 +52,7 @@ class Component {
 
     const vnode = this.render(createElement);
     vnode.props = vnode.props || {};
-    vnode.props['data-component'] = this.constructor.name;
-
+    vnode.props["data-component"] = this.constructor.name;
     render(vnode, this.containerRef);
   }
 }

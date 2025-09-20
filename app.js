@@ -1,5 +1,5 @@
 import { Component } from "./core/component.js";
-import { createElement as el } from "./core/vdom.js";
+import { createElement as el, C_TYPE_FRAGMENT } from "./core/vdom.js";
 import { ProviderRouter } from "./router/index.js";
 import { getConfigs } from "./configs/index.js";
 
@@ -9,7 +9,7 @@ mode = CFG_MODES_ROUTER.HASH;
 
 class App extends Component {
   render() {
-    return el("fragment", null, el(ProviderRouter, { mode }));
+    return el(C_TYPE_FRAGMENT, {}, el(ProviderRouter, { mode }));
   }
 }
 

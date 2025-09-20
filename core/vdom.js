@@ -1,48 +1,55 @@
-function isTypeClassComponent(t) {
-  return (
-    typeof t === 'function' &&
-    t.prototype &&
-    typeof t.prototype.render === 'function'
-  );
-}
+const C_TYPE_FRAGMENT = "FRAGMENT";
+const C_TYPE_TEXT = "TEXT";
 
-function isTypeFunctionalComponent(t) {
-  return (
-    typeof t === 'function' &&
-    (!t.prototype || typeof t.prototype.render !== 'function')
-  );
+const polyfillRequestIdleCallback =
+  typeof requestIdleCallback === "function"
+    ? requestIdleCallback
+    : (cb) =>
+        setTimeout(() => cb({ timeRemaining: () => 0, didTimeout: true }), 1);
+
+function isTypeClassComponent(t) {
+  return typeof t === "function" && typeof t.prototype?.render === "function";
 }
 
 function setProp(dom, name, value) {
-  if (name === 'className') {
-    dom.setAttribute('class', value);
+  if (name === "className") {
+    if (value == null || value === false) {
+      dom.removeAttribute("class");
+
+      return;
+    }
+
+    dom.setAttribute("class", value);
 
     return;
   }
 
-  if (name.startsWith('on') && typeof value === 'function') {
+  if (name.startsWith("on") && (typeof value === "function" || value == null)) {
     const nameEvent = name.slice(2).toLowerCase();
-
     dom.__listeners = dom.__listeners || {};
 
     if (dom.__listeners[nameEvent]) {
       dom.removeEventListener(nameEvent, dom.__listeners[nameEvent]);
+      delete dom.__listeners[nameEvent];
     }
 
-    dom.addEventListener(nameEvent, value);
-    dom.__listeners[nameEvent] = value;
+    if (typeof value === "function") {
+      dom.addEventListener(nameEvent, value);
+      dom.__listeners[nameEvent] = value;
+    }
 
     return;
   }
 
-  if (name === 'style' && typeof value === 'object') {
-    Object.assign(dom.style, value);
+  if (name === "style" && typeof value === "object") {
+    dom.removeAttribute("style");
+    Object.assign(dom.style, value || {});
 
     return;
   }
 
-  if (name === 'ref' && typeof value === 'function') {
-    value(dom);
+  if (name === "ref" && typeof value === "function") {
+    value(dom || null);
 
     return;
   }
@@ -53,377 +60,486 @@ function setProp(dom, name, value) {
     return;
   }
 
-  dom.setAttribute(name, value === true ? '' : value);
+  dom.setAttribute(name, value === true ? "" : value);
 }
 
-function createDOM(vnode) {
-  let { children = [], props = {}, type } = vnode;
+function updateDom(dom, propsPrev, propsNext, type) {
+  if (type === C_TYPE_TEXT) {
+    const nodeValue = propsNext?.nodeValue;
 
-  if (type === 'TEXT') {
-    return (vnode.__dom = document.createTextNode(props?.nodeValue || ''));
+    if (propsPrev?.nodeValue !== nodeValue) {
+      dom.nodeValue = nodeValue ?? "";
+    }
+
+    return;
   }
 
-  if (type === 'FRAGMENT') {
-    const s = document.createComment('s-fragment');
-    const e = document.createComment('e-fragment');
+  const keys = new Set([
+    ...Object.keys(propsPrev || {}),
+    ...Object.keys(propsNext || {}),
+  ]);
 
-    const elFragment = document.createDocumentFragment();
-    elFragment.appendChild(s);
-    elFragment.appendChild(e);
+  for (const k of keys) {
+    const valuePropsNext = propsNext ? propsNext[k] : undefined;
 
-    vnode.__start = vnode.__dom = s;
-    vnode.__end = e;
-
-    return elFragment;
-  }
-
-  const dom = document.createElement(type);
-
-  for (const k in props) {
-    setProp(dom, k, props[k]);
-  }
-
-  for (const c of children) {
-    if (!c) {
+    if ((propsPrev ? propsPrev[k] : undefined) === valuePropsNext) {
       continue;
     }
 
-    if (
-      c?.type === 'FRAGMENT' ||
-      isTypeClassComponent(c?.type) ||
-      isTypeFunctionalComponent(c?.type)
-    ) {
-      mountNode(dom, c, null);
-
-      continue;
-    }
-
-    dom.appendChild(createDOM(c));
+    setProp(dom, k, valuePropsNext);
   }
-
-  vnode.__dom = dom;
-
-  return dom;
-}
-
-function isChanged(vnodeOld, vnodeNew) {
-  return (
-    typeof vnodeOld !== typeof vnodeNew ||
-    (typeof vnodeOld === 'string' && vnodeOld !== vnodeNew) ||
-    vnodeOld.type !== vnodeNew.type
-  );
-}
-
-function insertBeforeOrAppend(parent, node, isBeforeNode) {
-  if (isBeforeNode) {
-    parent.insertBefore(node, isBeforeNode);
-
-    return;
-  }
-
-  parent.appendChild(node);
-}
-
-function removeNode(node) {
-  if (!node?.parentNode) {
-    return;
-  }
-
-  node.parentNode.removeChild(node);
-}
-
-function removeFragmentRange(vnode) {
-  const s = vnode.__start;
-  const e = vnode.__end;
-
-  if (!s || !e || !s.parentNode) {
-    return;
-  }
-
-  let c = s;
-
-  while (c) {
-    const next = c.nextSibling;
-    s.parentNode.removeChild(c);
-
-    if (c === e) {
-      break;
-    }
-
-    c = next;
-  }
-}
-
-function diff(container, vnodeOld, vnodeNew, beforeNode) {
-  if (!vnodeOld) {
-    mountNode(container, vnodeNew, beforeNode);
-
-    return;
-  }
-
-  if (!vnodeNew) {
-    unmountNode(container, vnodeOld);
-
-    return;
-  }
-
-  if (isChanged(vnodeOld, vnodeNew)) {
-    unmountNode(container, vnodeOld);
-    mountNode(container, vnodeNew, beforeNode);
-
-    return;
-  }
-
-  if (vnodeNew.type === 'TEXT') {
-    vnodeNew.__dom = vnodeOld.__dom;
-
-    if (vnodeOld.props.nodeValue === vnodeNew.props.nodeValue) {
-      return;
-    }
-
-    vnodeNew.__dom.nodeValue = vnodeNew.props.nodeValue;
-
-    return;
-  }
-
-  if (vnodeNew.type === 'FRAGMENT') {
-    vnodeNew.__start = vnodeOld.__start;
-    vnodeNew.__end = vnodeOld.__end;
-    vnodeNew.__dom = vnodeOld.__dom;
-    const szVNodeOld = vnodeOld.children.length;
-    const szVNodeNew = vnodeNew.children.length;
-    const cntMax = Math.max(szVNodeOld, szVNodeNew);
-
-    for (let i = 0; i < cntMax; ++i) {
-      diff(
-        container,
-        i < szVNodeOld ? vnodeOld.children[i] : null,
-        i < szVNodeNew ? vnodeNew.children[i] : null,
-        vnodeNew.__end
-      );
-    }
-
-    return;
-  }
-
-  if (isTypeClassComponent(vnodeNew.type)) {
-    updateComponent(container, vnodeOld, vnodeNew, beforeNode);
-
-    return;
-  }
-
-  if (isTypeFunctionalComponent(vnodeNew.type)) {
-    updateFunctional(container, vnodeOld, vnodeNew, beforeNode);
-
-    return;
-  }
-
-  const dom = (vnodeNew.__dom = vnodeOld.__dom);
-  const propsOld = vnodeOld.props || {};
-  const propsNew = vnodeNew.props || {};
-
-  for (const key in propsOld) {
-    if (key in propsNew) {
-      continue;
-    }
-
-    setProp(dom, key, null);
-  }
-
-  for (const key in propsNew) {
-    setProp(dom, key, propsNew[key]);
-  }
-
-  const szVNodeOld = vnodeOld.children.length;
-  const szVNodeNew = vnodeNew.children.length;
-  const cntMax = Math.max(szVNodeOld, szVNodeNew);
-
-  for (let i = 0; i < cntMax; ++i) {
-    diff(
-      dom,
-      i < szVNodeOld ? vnodeOld.children[i] : null,
-      i < szVNodeNew ? vnodeNew.children[i] : null,
-      null
-    );
-  }
-}
-
-function render(vnode, container) {
-  diff(container, container.__vnode || null, vnode, null);
-  container.__vnode = vnode;
 }
 
 function createElement(type, props = {}, ...children) {
   return {
-    children: children
-      .flat()
-      .filter((c) => c !== null && c !== undefined && c !== false)
-      .map((c) =>
-        typeof c === 'string' || typeof c === 'number'
-          ? { children: [], props: { nodeValue: String(c) }, type: 'TEXT' }
-          : c
-      ),
-    props,
-    type: type === 'fragment' ? 'FRAGMENT' : type,
+    props: {
+      ...(props || {}),
+      children: children
+        .flat()
+        .filter((c) => c !== null && c !== undefined && c !== false)
+        .map((c) =>
+          typeof c === "string" || typeof c === "number"
+            ? {
+                children: [],
+                props: { nodeValue: String(c) },
+                type: C_TYPE_TEXT,
+              }
+            : c
+        ),
+    },
+    type,
   };
 }
 
-function mountNode(container, vnode, beforeNode) {
-  if (vnode?.type === 'FRAGMENT') {
-    const s = document.createComment('s-fragment');
-    const e = document.createComment('e-fragment');
-    vnode.__start = vnode.__dom = s;
-    vnode.__end = e;
-    insertBeforeOrAppend(container, s, beforeNode);
-    insertBeforeOrAppend(container, e, beforeNode);
-    const children = vnode.children || [];
+let nextUnitOfWork = null;
+let wipRoot = null;
 
-    for (const c of children) {
-      mountNode(container, c, e);
-    }
+function workLoop(deadline) {
+  let shouldYield = false;
 
-    return;
+  while (nextUnitOfWork && !shouldYield) {
+    nextUnitOfWork = performUnitOfWork(nextUnitOfWork);
+    shouldYield = deadline.timeRemaining() < 1;
   }
 
-  if (isTypeClassComponent(vnode?.type)) {
-    mountComponent(container, vnode, beforeNode);
-
-    return;
+  if (!nextUnitOfWork && wipRoot) {
+    commitRoot();
   }
 
-  if (isTypeFunctionalComponent(vnode?.type)) {
-    mountFunctional(container, vnode, beforeNode);
-
-    return;
-  }
-
-  insertBeforeOrAppend(container, createDOM(vnode), beforeNode);
+  polyfillRequestIdleCallback(workLoop);
 }
 
-function unmountNode(container, vnode) {
-  if (!vnode) {
-    return;
+polyfillRequestIdleCallback(workLoop);
+
+function createDomFromFiber(fiber) {
+  if (fiber.type === C_TYPE_TEXT) {
+    return document.createTextNode(fiber.props?.nodeValue || "");
   }
 
-  if (isTypeClassComponent(vnode.type)) {
-    const instance = vnode.__instance;
+  if (fiber.type === C_TYPE_FRAGMENT) {
+    return null;
+  }
 
-    if (instance && typeof instance.unmount === 'function') {
+  const dom = document.createElement(fiber.type);
+  updateDom(dom, {}, fiber.props || {}, fiber.type);
+
+  return dom;
+}
+
+let pendingsLayoutEffects = [];
+
+function flushLayoutEffects() {
+  const runs = pendingsLayoutEffects;
+  pendingsLayoutEffects = [];
+
+  for (const { hook } of runs) {
+    if (typeof hook.cleanup === "function") {
       try {
-        instance.unmount();
-      } catch {
+        hook.cleanup();
+      } catch (_) {
         // ignore
       }
+
+      hook.cleanup = undefined;
     }
 
-    if (vnode.__rendered) {
-      unmountNode(container, vnode.__rendered);
-    }
-
-    if (vnode.__dom) {
-      removeNode(vnode.__dom);
-    }
-
-    return;
+    const r = typeof hook.create === "function" ? hook.create() : undefined;
+    hook.cleanup = typeof r === "function" ? r : undefined;
   }
-
-  if (isTypeFunctionalComponent(vnode.type)) {
-    if (vnode.__rendered) {
-      unmountNode(container, vnode.__rendered);
-    }
-
-    if (vnode.__dom) {
-      removeNode(vnode.__dom);
-    }
-
-    return;
-  }
-
-  if (vnode.type === 'FRAGMENT') {
-    removeFragmentRange(vnode);
-
-    return;
-  }
-
-  removeNode(vnode.__dom);
 }
 
-function mountComponent(container, vnode, beforeNode) {
-  const ComponentClass = vnode.type;
+let pendingsPassiveEffects = [];
 
-  if (!isTypeClassComponent(ComponentClass)) {
-    throw new Error(
-      'Functional components cannot be mounted as class components...'
+function schedulePassiveEffectsFlush() {
+  const runs = pendingsPassiveEffects;
+  pendingsPassiveEffects = [];
+
+  setTimeout(() => {
+    for (const { hook } of runs) {
+      if (typeof hook.cleanup === "function") {
+        try {
+          hook.cleanup();
+        } catch (_) {
+          // ignore
+        }
+
+        hook.cleanup = undefined;
+      }
+
+      const r = typeof hook.create === "function" ? hook.create() : undefined;
+      hook.cleanup = typeof r === "function" ? r : undefined;
+    }
+  }, 0);
+}
+
+let deletions = [];
+let currentRoot = null;
+
+function commitRoot() {
+  for (const deletion of deletions) {
+    commitWork(deletion);
+  }
+
+  commitWork(wipRoot.child);
+  currentRoot = wipRoot;
+  flushLayoutEffects();
+  schedulePassiveEffectsFlush();
+  wipRoot = null;
+}
+
+function commitWork(fiber) {
+  if (!fiber) {
+    return;
+  }
+
+  let parentFiber = fiber.parent;
+
+  while (parentFiber && !parentFiber.dom) {
+    parentFiber = parentFiber.parent;
+  }
+
+  const domParent = parentFiber ? parentFiber.dom : null;
+
+  if (fiber.effectTag === "DELETION") {
+    commitDeletion(fiber, domParent);
+
+    return;
+  }
+
+  if (fiber.effectTag === "PLACEMENT") {
+    if (fiber.dom && domParent) {
+      domParent.appendChild(fiber.dom);
+    } else if (
+      fiber.stateNode &&
+      typeof fiber.stateNode.componentDidMount === "function"
+    ) {
+      queueMicrotask(() => {
+        try {
+          fiber.stateNode.componentDidMount();
+        } catch (_) {
+          // ignore
+        }
+      });
+    }
+  } else if (fiber.effectTag === "UPDATE" && fiber.dom) {
+    updateDom(
+      fiber.dom,
+      (fiber.alternate && fiber.alternate.props) || {},
+      fiber.props || {},
+      fiber.type
     );
   }
 
-  const instance = new ComponentClass({
-    ...(vnode.props || {}),
-    children: (vnode.children || [])
-      .flat()
-      .filter((c) => c !== null && c !== undefined && c !== false),
-  });
-  vnode.__instance = instance;
-  instance.__vnode = vnode;
-  instance.__updater = function () {
-    const renderedOld = vnode.__rendered;
-    const renderedNew = instance.render(createElement);
-    vnode.__rendered = renderedNew;
-    diff(container, renderedOld || null, renderedNew, beforeNode || null);
-    vnode.__dom = renderedNew && renderedNew.__dom;
-  };
-  const renderedNew = instance.render(createElement);
-  vnode.__rendered = renderedNew;
-  diff(container, null, renderedNew, beforeNode || null);
-  vnode.__dom = renderedNew && renderedNew.__dom;
+  commitWork(fiber.child);
+  commitWork(fiber.sibling);
+}
 
-  if (typeof instance.componentDidMount !== 'function') {
+function cleanupEffectsOnFiber(fiber) {
+  if (!fiber?.hooks) {
     return;
   }
 
-  queueMicrotask(() => instance.componentDidMount());
+  const { hooks } = fiber;
+
+  for (const h of hooks) {
+    if (
+      (h?.tag === "layout" || h?.tag === "effect") &&
+      typeof h?.cleanup === "function"
+    ) {
+      try {
+        h.cleanup();
+      } catch (_) {
+        // ignore
+      }
+
+      h.cleanup = undefined;
+    }
+  }
 }
 
-function updateComponent(container, vnodeOld, vnodeNew, beforeNode) {
-  const instance = vnodeOld.__instance;
-  vnodeNew.__instance = instance;
-  instance.__vnode = vnodeNew;
-  instance.props = {
-    ...(vnodeNew.props || {}),
-    children: (vnodeNew.children || [])
-      .flat()
-      .filter((c) => c !== null && c !== undefined && c !== false),
+function commitDeletion(fiber, domParent) {
+  if (!fiber) {
+    return;
+  }
+
+  cleanupEffectsOnFiber(fiber);
+
+  if (fiber.dom) {
+    if (fiber.dom.parentNode) {
+      fiber.dom.parentNode.removeChild(fiber.dom);
+    }
+
+    return;
+  }
+
+  commitDeletion(fiber.child, domParent);
+
+  if (fiber.sibling) {
+    commitDeletion(fiber.sibling, domParent);
+  }
+}
+
+function render(vnode, container) {
+  nextUnitOfWork = wipRoot = {
+    dom: container,
+    props: { children: [vnode] },
+    alternate: currentRoot,
   };
-  const renderedOld = vnodeOld.__rendered;
-  const renderedNew = instance.render(createElement);
-  vnodeNew.__rendered = renderedNew;
-  diff(container, renderedOld, renderedNew, beforeNode || null);
-  vnodeNew.__dom = renderedNew && renderedNew.__dom;
+  container.__vnode = vnode;
+  deletions = [];
 }
 
-function mountFunctional(container, vnode, beforeNode) {
-  const rendered = vnode.type({
-    ...(vnode.props || {}),
-    children: (vnode.children || [])
-      .flat()
-      .filter((c) => c !== null && c !== undefined && c !== false),
+function performUnitOfWork(fiber) {
+  if (typeof fiber.type === "function") {
+    updateCompositeComponent(fiber);
+  } else {
+    updateHostComponent(fiber);
+  }
+
+  if (fiber.child) {
+    return fiber.child;
+  }
+
+  let next = fiber;
+
+  while (next) {
+    if (next.sibling) {
+      return next.sibling;
+    }
+
+    next = next.parent;
+  }
+
+  return null;
+}
+
+let wipFiber = null;
+
+function reconcileChildren(wipFiber, elements) {
+  let index = 0;
+  let oldFiber = wipFiber.alternate && wipFiber.alternate.child;
+  let prevSibling = null;
+
+  while (index < (elements ? elements.length : 0) || oldFiber != null) {
+    const element = elements && elements[index];
+    const sameType = oldFiber && element && element.type === oldFiber.type;
+    let newFiber = null;
+
+    if (sameType) {
+      newFiber = {
+        type: oldFiber.type,
+        props: element.props,
+        dom: oldFiber.dom,
+        parent: wipFiber,
+        alternate: oldFiber,
+        effectTag: "UPDATE",
+        stateNode: oldFiber.stateNode,
+      };
+    }
+
+    if (element && !sameType) {
+      newFiber = {
+        type: element.type,
+        props: element.props,
+        dom: null,
+        parent: wipFiber,
+        alternate: null,
+        effectTag: "PLACEMENT",
+      };
+    }
+
+    if (oldFiber && !sameType) {
+      oldFiber.effectTag = "DELETION";
+      deletions.push(oldFiber);
+    }
+
+    if (oldFiber) {
+      oldFiber = oldFiber.sibling;
+    }
+
+    if (index === 0) {
+      wipFiber.child = newFiber;
+    } else if (prevSibling) {
+      prevSibling.sibling = newFiber;
+    }
+
+    prevSibling = newFiber;
+    ++index;
+  }
+}
+
+let hookIndex = null;
+
+function updateCompositeComponent(fiber) {
+  const t = fiber.type;
+
+  if (isTypeClassComponent(t)) {
+    let instance = fiber.stateNode;
+
+    if (!instance) {
+      fiber.stateNode = instance = new t({
+        ...(fiber.props || {}),
+        children: fiber.props?.children || [],
+      });
+      instance.__updater = function __updater() {
+        if (!currentRoot) {
+          return;
+        }
+
+        nextUnitOfWork = wipRoot = {
+          dom: currentRoot.dom,
+          props: currentRoot.props,
+          alternate: currentRoot,
+        };
+        deletions = [];
+      };
+    } else {
+      instance.props = {
+        ...(fiber.props || {}),
+        children: fiber.props?.children || [],
+      };
+    }
+
+    reconcileChildren(fiber, [instance.render(createElement)]);
+
+    return;
+  }
+
+  hookIndex = 0;
+  wipFiber = fiber;
+  wipFiber.hooks = [];
+  reconcileChildren(fiber, [
+    t({
+      ...(fiber.props || {}),
+      children: fiber.props?.children || [],
+    }),
+  ]);
+}
+
+function updateHostComponent(fiber) {
+  if (!fiber.dom) {
+    fiber.dom = createDomFromFiber(fiber);
+  }
+
+  reconcileChildren(
+    fiber,
+    fiber.props && Array.isArray(fiber.props.children)
+      ? fiber.props.children
+      : []
+  );
+}
+
+function useState(initial) {
+  const oldHook =
+    wipFiber &&
+    wipFiber.alternate &&
+    wipFiber.alternate.hooks &&
+    wipFiber.alternate.hooks[hookIndex];
+  const hook = {
+    state: oldHook ? oldHook.state : initial,
+    queue: [],
+  };
+  const actions = oldHook ? oldHook.queue : [];
+
+  for (const action of actions) {
+    hook.state = (typeof action === "function" ? action : () => action)(
+      hook.state
+    );
+  }
+
+  wipFiber.hooks.push(hook);
+  ++hookIndex;
+
+  return [
+    hook.state,
+    (action) => {
+      hook.queue.push(action);
+
+      if (!currentRoot) {
+        return;
+      }
+
+      nextUnitOfWork = wipRoot = {
+        dom: currentRoot.dom,
+        props: currentRoot.props,
+        alternate: currentRoot,
+      };
+      deletions = [];
+    },
+  ];
+}
+
+function _areDependenciesChanged(prev, next) {
+  if (prev?.length !== next?.length) {
+    return true;
+  }
+
+  for (let i = 0; i < prev.length; ++i) {
+    if (!Object.is(prev[i], next[i])) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function pushToPendings(tag, create, deps) {
+  const isLayoutEffect = tag === "layout";
+  const oldHook =
+    wipFiber?.alternate?.hooks && wipFiber.alternate.hooks[hookIndex];
+  const hook = {
+    tag,
+    create,
+    deps,
+    cleanup: oldHook?.cleanup,
+  };
+  wipFiber.hooks.push(hook);
+  ++hookIndex;
+
+  if (!_areDependenciesChanged(oldHook?.deps, deps)) {
+    return;
+  }
+
+  (isLayoutEffect ? pendingsLayoutEffects : pendingsPassiveEffects).push({
+    fiber: wipFiber,
+    hook,
   });
-  vnode.__rendered = rendered;
-  diff(container, null, rendered, beforeNode || null);
-  vnode.__dom = rendered && rendered.__dom;
 }
 
-function updateFunctional(container, vnodeOld, vnodeNew, beforeNode) {
-  const renderedOld = vnodeOld.__rendered;
-  const renderedNew = vnodeNew.type({
-    ...(vnodeNew.props || {}),
-    children: (vnodeNew.children || [])
-      .flat()
-      .filter((c) => c !== null && c !== undefined && c !== false),
-  });
-  vnodeNew.__rendered = renderedNew;
-  diff(container, renderedOld, renderedNew, beforeNode || null);
-  vnodeNew.__dom = renderedNew && renderedNew.__dom;
+function useEffect(create, deps) {
+  pushToPendings("effect", create, deps);
 }
 
-export { createElement, render };
+function useLayoutEffect(create, deps) {
+  pushToPendings("layout", create, deps);
+}
+
+export {
+  createElement,
+  render,
+  useState,
+  useEffect,
+  useLayoutEffect,
+  C_TYPE_TEXT,
+  C_TYPE_FRAGMENT,
+};
