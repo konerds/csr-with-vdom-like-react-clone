@@ -42,7 +42,7 @@ class ProviderRouter extends Component {
   }
 
   componentDidMount() {
-    const { mode = CFG_MODES_ROUTER.HISTORY } = this.props;
+    const { mode = CFG_MODES_ROUTER.HASH } = this.props;
 
     const navigate = (to) => {
       if (window.location.pathname + window.location.search === to) {
