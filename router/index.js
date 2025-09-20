@@ -1,7 +1,7 @@
 import { getConfigs } from "../configs/index.js";
 import { Component } from "../core/component.js";
 import { Router } from "../core/router.js";
-import { createElement as el } from "../core/vdom.js";
+import { C_TYPE_FRAGMENT, createElement as el } from "../core/vdom.js";
 import { PageTodo } from "../pages/todos/slug.js";
 import { PageTodos } from "../pages/todos/index.js";
 import { Page404 } from "../pages/not-found.js";
@@ -106,6 +106,8 @@ class ProviderRouter extends Component {
 
     switch (route) {
       case HANDLERS.BASE:
+        elPage = C_TYPE_FRAGMENT;
+
         break;
 
       case HANDLERS.TODOS:

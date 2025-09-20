@@ -58,9 +58,15 @@ class Router {
       }
 
       if (replace) {
-        window.location.replace(
-          window.location.href.replace(/#.*$/, "") + next
-        );
+        try {
+          window.location.replace(
+            window.location.href.replace(/#.*$/, "") + next
+          );
+        } catch (e) {
+          console.error(e);
+
+          return;
+        }
 
         return;
       }
@@ -74,13 +80,17 @@ class Router {
       return;
     }
 
-    if (replace) {
-      window.history.replaceState({}, "", next);
-    } else {
-      window.history.pushState({}, "", next);
-    }
+    try {
+      if (replace) {
+        window.history.replaceState({}, "", next);
+      } else {
+        window.history.pushState({}, "", next);
+      }
 
-    this.#scheduleResolve();
+      this.#scheduleResolve();
+    } catch (e) {
+      console.error(e);
+    }
   }
 
   resolve() {
